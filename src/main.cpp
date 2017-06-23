@@ -1,5 +1,6 @@
 #include <uWS/uWS.h>
 #include <iostream>
+#include <algorithm>
 #include "json.hpp"
 #include "PID.h"
 #include <math.h>
@@ -28,22 +29,88 @@ std::string hasData(std::string s) {
   return "";
 }
 
+// Resetting the Simulator
+void reset_simulator(uWS::WebSocket<uWS::SERVER>& ws){
+  std::string msg("42[\"reset\",{}]");
+  ws.send(msg.data(),msg.length(), uWS::OpCode::TEXT);
+}
+
+// Create a twiddle class
+//struct flag{
+//	bool success;
+//	bool val;
+//};
+struct parameter{
+	bool fwd_flag, bwd_flag;
+	double val, factor;
+};
+
+class Twiddle {
+	int max_dist, np;
+	public:
+		std::vector<parameter> dp;
+		int dist_count, ind;
+		double best_err, err;
+		bool is_used, is_initialized;
+		Twiddle(int);
+		bool distance_reached();
+		void initialize();
+};
+
+Twiddle::Twiddle(int maxval){
+	max_dist = maxval;
+	np = 3;			// number of parameters for twiddle
+	dist_count = 0;
+	err = 0;
+	best_err = 0;
+	for (int i=0; i< np; i++){
+		parameter p;
+		p.fwd_flag = false;
+		p.bwd_flag = false;
+		//p.bwd_flag.success = false;
+		p.val = 1;
+		p.factor = 0;
+		dp.push_back(p);
+	}
+	is_initialized = false;
+	is_used = false;			// Default value is false
+}
+void Twiddle::initialize(){
+	best_err = err;
+	is_initialized = true;
+	ind = 0;
+	dp[ind].fwd_flag = true;
+	//dp[ind].factor = 1
+	for (int i=0; i<np; i++){
+		dp[i].fwd_flag = true;
+		dp[i].factor = 1;
+	}
+}
+bool Twiddle::distance_reached(){
+	return dist_count >= max_dist;
+}
+
 int main(int argc, char *argv[])
 {
   uWS::Hub h;
 
   PID pid;
+	Twiddle tw(atoi(argv[4]));
+	// To not use twiddle, comment the below line
+	tw.is_used = true;
+  //const int max_dist = atoi(argv[4]);
   // TODO: Initialize the pid variable.
   double kp_init = atof(argv[1]);
   double ki_init = atof(argv[2]);
   double kd_init = atof(argv[3]);
   pid.Init(kp_init, ki_init, kd_init);
-  h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  h.onMessage([&pid,&tw](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
     if (length && length > 2 && data[0] == '4' && data[1] == '2')
     {
+      //std::cout<<"the dist count is "<< dist_count<< std::endl;
       auto s = hasData(std::string(data).substr(0, length));
       if (s != "") {
         auto j = json::parse(s);
@@ -60,8 +127,95 @@ int main(int argc, char *argv[])
           * NOTE: Feel free to play around with the throttle and speed. Maybe use
           * another PID controller to control the speed!
           */
+					// using twiddle
+					if (tw.is_used){
+						// Updating distance count and error
+						tw.dist_count += 1;
+						//if (tw.dist_count > 100)
+						tw.err += (cte*cte - tw.err)/tw.dist_count; 		// storing average error after 100 steps
+						// Checking if distance count has exceeded limit or the vehicle has gone off the road.
+						if(tw.distance_reached()||(fabs(cte) >= 2.2)){
+							// Twiddle initialization - assign best_err to the first err calculation
+							if(!tw.is_initialized)
+								tw.initialize();
+							// updating the factor according to flags and error condition
+							else {
+								// if error condition passes
+								if (tw.err < tw.best_err){
+									tw.best_err = tw.err;
+									tw.dp[tw.ind].factor = 1.1;
+								}
+								else{
+									// change direction if unsuccessful in the forward direction
+									if (tw.dp[tw.ind].fwd_flag){
+										tw.dp[tw.ind].bwd_flag = true;
+										tw.dp[tw.ind].fwd_flag = false;
+									}
+									// reduce factor if unsuccessful in the backward direction too
+									else {
+										tw.dp[tw.ind].bwd_flag = false;
+										tw.dp[tw.ind].factor = 0.9;
+									}
+								}
+							}
+							// updating state
+							if (tw.dp[tw.ind].fwd_flag){
+								switch(tw.ind){
+									case 0:
+										pid.Kp += tw.dp[0].val;
+										break;
+									case 1:
+										pid.Ki += tw.dp[1].val;
+										break;
+									case 2:
+										pid.Kd += tw.dp[2].val;
+										break;
+								}
+							}
+							else if(tw.dp[tw.ind].bwd_flag){
+								switch(tw.ind){
+									case 0:
+										pid.Kp -= 2*tw.dp[0].val;
+										break;
+									case 1:
+										pid.Ki -= 2*tw.dp[1].val;
+										break;
+									case 2:
+										pid.Kd -= 2*tw.dp[2].val;
+										break;
+								}
+							}
+							else {
+								// Bringing back the previous parameters
+								switch(tw.ind){
+									case 0:
+										pid.Kp += tw.dp[0].val;
+										break;
+									case 1:
+										pid.Ki += tw.dp[1].val;
+										break;
+									case 2:
+										pid.Kd += tw.dp[2].val;
+										break;
+								}
+							}
+							// updating dp factor
+							tw.dp[tw.ind].val *= tw.dp[tw.ind].factor;
+							// choosing next index
+							if (!tw.dp[tw.ind].fwd_flag && !tw.dp[tw.ind].bwd_flag){
+								tw.ind = (tw.ind + 1) % 3;
+								tw.dp[tw.ind].fwd_flag = true;
+							}
+							// reinitializing dist and err
+							tw.dist_count = 0;
+							tw.err = 0;
+							// reset simulator
+							reset_simulator(ws);
+						}
+					}
+					// Calculating Steering value
           pid.UpdateError(cte);
-	  steer_value = -pid.TotalError();
+	  			steer_value = -pid.TotalError();
           // DEBUG
           std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
 
