@@ -9,7 +9,13 @@ public:
   double p_error;
   double i_error;
   double d_error;
-
+  double sq_err;
+  double mean_sq_err;
+  double count;
+  /*
+   * Initializing boolean 
+   */
+  bool is_initialized;
   /*
   * Coefficients
   */ 

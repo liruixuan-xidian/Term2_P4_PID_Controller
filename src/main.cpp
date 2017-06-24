@@ -38,53 +38,52 @@ void reset_simulator(uWS::WebSocket<uWS::SERVER>& ws){
 // Create a twiddle class
 struct parameter{
   bool fwd_flag, bwd_flag;
-  double val, factor;
+  double val;
 };
 
 class Twiddle {
   int max_dist, np;
   public:
     std::vector<parameter> dp;
-    int dist_count, ind;
-    double best_err, err;
+    std::vector<double> best_param;
+    int dist_count, ind, iter;
+    double best_err, err, avg_err;
     bool is_used, is_initialized;
     Twiddle(int);
     bool distance_reached();
-    void initialize();
+    double sum_dp();
+    //void initialize();
 };
 
 Twiddle::Twiddle(int maxval){
   max_dist = maxval;
   np = 3;	    // number of parameters for twiddle
   dist_count = 0;
+  iter = 0;
   err = 0;
+  avg_err = 0;
   best_err = 0;
   for (int i=0; i< np; i++){
     parameter p;
     p.fwd_flag = false;
     p.bwd_flag = false;
-    //p.bwd_flag.success = false;
     p.val = 1;
-    p.factor = 1;
     dp.push_back(p);
   }
   is_initialized = false;
   is_used = false;      // Default value is false
 }
 
-void Twiddle::initialize(){
-  best_err = err;
-  is_initialized = true;
-  ind = 0;
-  dp[ind].fwd_flag = true;
-  //dp[ind].factor = 1
-  for (int i=0; i<np; i++){
-    dp[i].fwd_flag = true;
-  }
-}
-
 bool Twiddle::distance_reached(){
   return dist_count >= max_dist;
+}
+
+double Twiddle::sum_dp(){
+  double sum=0;
+  for (std::vector<parameter>::iterator it = dp.begin(); it!= dp.end(); ++it){
+    sum += (*it).val;
+  }
+  return sum;
 }
 
 int main(int argc, char *argv[])
@@ -92,23 +91,31 @@ int main(int argc, char *argv[])
   uWS::Hub h;
 
   PID pid;
-  Twiddle tw(atoi(argv[4]));
-  // To not use twiddle, comment the below line
-  tw.is_used = true;
-  //const int max_dist = atoi(argv[4]);
-  // TODO: Initialize the pid variable.
+  // TODO: Initialize the pid variable. 0.3,0,3.5 @34
   double kp_init, ki_init, kd_init;
+  int max_dist;
   if (argc == 1){
-    kp_init = 0.3;
-    ki_init = 0;
-    kd_init = 3.5;
+    kp_init = 0.64;
+    ki_init = 0.00025;
+    kd_init = 7.75;
+    max_dist = 2000;
+  }
+  else if(argc == 4){
+    kp_init = atof(argv[1]);
+    ki_init = atof(argv[2]);
+    kd_init = atof(argv[3]);
+    max_dist = 2000;
   }
   else{
     kp_init = atof(argv[1]);
     ki_init = atof(argv[2]);
     kd_init = atof(argv[3]);
+    max_dist = atoi(argv[4]);
   }
   pid.Init(kp_init, ki_init, kd_init);
+  Twiddle tw(max_dist);     // initializing twiddle
+  // To not use twiddle, comment the line below.
+  //tw.is_used = true;
   h.onMessage([&pid,&tw](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -137,87 +144,142 @@ int main(int argc, char *argv[])
 	    // Updating distance count and error
 	    tw.dist_count += 1;
 	    //if (tw.dist_count > 100)
-	    tw.err += (cte*cte - tw.err)/tw.dist_count;   // storing average error
+	    tw.err += cte*cte;   
+            // storing average error
+            tw.avg_err = tw.err/tw.dist_count;
 	    // Checking if distance count has exceeded limit or the vehicle has gone off the road.
-	    if(tw.distance_reached()||(fabs(cte) >= 2.2)){
+	    if(tw.distance_reached()||(std::fabs(cte) >= 2.2)){
 	      // Twiddle initialization - assign best_err to the first err calculation
-	      if(!tw.is_initialized)
-		tw.initialize();
+              //if(std::fabs(cte) >= 2.2){
+                //tw.avg_err += 50;
+                //std::cout<<"This has run across the road\n";
+              //}
+              //std::cout<<"sum of dp: "<<tw.sum_dp()<<std::endl;
+	      if(!tw.is_initialized){
+		//tw.initialize();
+                //std::cout <<"Twiddle is about to be initialized..\n";
+                tw.best_err = tw.avg_err;
+                tw.ind = 0;
+                tw.dp[0].fwd_flag = true;
+                tw.dp[0].bwd_flag = false;
+                // going forward post initialization
+                pid.Kp += tw.dp[0].val;
+                tw.is_initialized = true;
+                //std::cout <<"Initialization is done!\n";
+              }
 	      else {
 	        // if error condition passes
-		if (tw.err < tw.best_err){
-		  tw.best_err = tw.err;
-		  tw.dp[tw.ind].factor = 1.1;
+		if (tw.avg_err < tw.best_err){
+                  //std::cout<<"new best error found!\n";
+		  tw.best_err = tw.avg_err;
+                  // update dp
+                  tw.dp[tw.ind].val *= 1.1;
+                  //std::cout<<"the dp value is multiplied be 1.1\n";
                   // change index since best config found!
                   tw.ind = (tw.ind + 1) % 3;
                   tw.dp[tw.ind].fwd_flag = true;
                   tw.dp[tw.ind].bwd_flag = false;
+                  std::cout<<"Best PID params- Kp: "<<pid.Kp<<" Ki: "<<pid.Ki<<" Kd: "<<pid.Kd<<"\n";
+                  //std::cout<<"The index is changed by 1 and fwd_flag is 1 and bwd_flag is 0\n";
 		}
                 else{
                   // change direction if unsuccessful in the forward direction
                   if (tw.dp[tw.ind].fwd_flag){
 		    tw.dp[tw.ind].bwd_flag = true;
 		    tw.dp[tw.ind].fwd_flag = false;
+                    // changing direction of parameter
+                    switch(tw.ind){
+                      case 0:
+                        pid.Kp -= 2*tw.dp[0].val;
+                        break;
+                      case 1:
+                        pid.Ki -= 2*tw.dp[1].val;
+                        break;
+                      case 2:
+                        pid.Kd -= 2*tw.dp[2].val;
+                        break;
+                    }
+                    //reset_simulator(ws);
+                    //std::cout << "It was unsuccessful in the forward direction of "<<tw.ind<<" index\n";
+                    //std::cout << "The parameters go two steps back\n";
 		  }
                   // reduce factor if unsuccessful in the backward direction too
 		  else {
-		    tw.dp[tw.ind].factor = 0.9;
+		    //bringing back previous configuration of PID parameters
+                    switch(tw.ind){
+                      case 0:
+                        pid.Kp += tw.dp[0].val;
+                        break;
+                      case 1:
+                        pid.Ki += tw.dp[1].val;
+                        break;
+                      case 2:
+                        pid.Kd += tw.dp[2].val;
+                        break;
+                    }
+                    //std::cout << "it was unsuccessful in the backward direction of "<<tw.ind<<" index\n";
+                    // updating dp.val
+                    tw.dp[tw.ind].val *= 0.9;
+                    //std::cout <<"The dp value is multiplied by 0.9 and the parameters are brought back\n";
                     // change index since best config not found
                     tw.ind = (tw.ind + 1) % 3;
                     tw.dp[tw.ind].fwd_flag = true;
-                    tw.dp[tw.ind].bed_flag = false;
+                    tw.dp[tw.ind].bwd_flag = false;
+                    //std::cout<<"we now move onto the new "<<tw.ind<<" index with fwd_flag as 1 and bwd_flag as 0\n";
 		  }
 		}
-	      }
-              // updating dp factor
-	      tw.dp[tw.ind].val *= tw.dp[tw.ind].factor;
-	      // updating state
-	      if(tw.dp[tw.ind].bwd_flag){
-	      	// in case the flag is backward, moving two steps backward
-                switch(tw.ind){
-	          case 0:
-		    pid.Kp -= 2*tw.dp[0].val;
-		    break;
-		  case 1:
-		    pid.Ki -= 2*tw.dp[1].val;
-		    break;
-		  case 2:
-		    pid.Kd -= 2*tw.dp[2].val;
-		    break;
-		}
-	      }
-	      else {
-                // Either Bringing back the previous state or going forward
-		switch(tw.ind){
-		  case 0:
-		    pid.Kp += tw.dp[0].val;
-		    break;
-		  case 1:
-		    pid.Ki += tw.dp[1].val;
-		    break;
-		  case 2:
-		    pid.Kd += tw.dp[2].val;
-		    break;
-		}
-	      }
+	        // updating state
+	        if(tw.dp[tw.ind].fwd_flag) {
+                  // going one step forward
+		  switch(tw.ind){
+		    case 0:
+		      pid.Kp += tw.dp[0].val;
+		      break;
+		    case 1:
+		      pid.Ki += tw.dp[1].val;
+		      break;
+		    case 2:
+		      pid.Kd += tw.dp[2].val;
+		      break;
+		  }
+                  //reset_simulator(ws);      //reseting the simulator after updating params
+                  //std::cout<<"and we take one step forward in "<<tw.ind<<" index\n";
+	        }
+              }
 	      // reinitializing dist and err
 	      tw.dist_count = 0;
 	      tw.err = 0;
+              ++tw.iter;
+              std::cout<<"iteration= "<<tw.iter<<std::endl;
+              std::cout<<"The sum of dp = "<<tw.sum_dp()<<std::endl;
+              std::cout<<"PID- Kp: "<<pid.Kp<<" Ki: "<<pid.Ki<<" Kd: "<<pid.Kd<<std::endl;
+              //std::cout<<"reinitializing dist_count and err and resetting the simulator\n";
 	      // reset simulator
-	      reset_simulator(ws);
+              //if (std::fabs(cte)>2.2){
+              reset_simulator(ws);
+              //}
+	      //reset_simulator(ws);
 	    }
 	  }
 	  // Calculating Steering value
           pid.UpdateError(cte);
 	  steer_value = -pid.TotalError();
+          if (steer_value > 1)
+            steer_value = 1;
+          else if(steer_value < -1)
+            steer_value = -1;
           // DEBUG
+          //std::cout << "chosen index: "<< tw.ind <<" Forward: "<< tw.dp[tw.ind].fwd_flag;
+          //std::cout << " Backward: " << tw.dp[tw.ind].bwd_flag<< std::endl;
           std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
-          std::cout << "P Gain: " << pid.Kp <<"I Gain: "<< pid.Ki<<"D Gain: "<<pid.Kd<< std::endl;
+          std::cout << "P Gain: " << pid.Kp <<" I Gain: "<< pid.Ki<<" D Gain: "<<pid.Kd<< std::endl;
+          std::cout << "Mean Squared Error: "<<pid.mean_sq_err<< std::endl;
+          //std::cout << "Average error: " << tw.avg_err <<" Best error: "<<tw.best_err << std::endl;
           json msgJson;
           msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = 0.3;
+          msgJson["throttle"] = 0.3/35*(35+15*(1-std::fabs(steer_value)));
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
+          //std::cout << msg << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
