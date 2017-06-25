@@ -96,9 +96,9 @@ int main(int argc, char *argv[])
   int max_dist;
   if (argc == 1){
     kp_init = 0.64;
-    ki_init = 0.00025;
-    kd_init = 7.75;
-    max_dist = 2000;
+    ki_init = 0.0002;
+    kd_init = 7.5;
+    max_dist = 4000;
   }
   else if(argc == 4){
     kp_init = atof(argv[1]);
@@ -253,6 +253,7 @@ int main(int argc, char *argv[])
               std::cout<<"iteration= "<<tw.iter<<std::endl;
               std::cout<<"The sum of dp = "<<tw.sum_dp()<<std::endl;
               std::cout<<"PID- Kp: "<<pid.Kp<<" Ki: "<<pid.Ki<<" Kd: "<<pid.Kd<<std::endl;
+              std::cout <<"Average error: "<< tw.avg_err<< std::endl;
               //std::cout<<"reinitializing dist_count and err and resetting the simulator\n";
 	      // reset simulator
               //if (std::fabs(cte)>2.2){
@@ -277,7 +278,8 @@ int main(int argc, char *argv[])
           //std::cout << "Average error: " << tw.avg_err <<" Best error: "<<tw.best_err << std::endl;
           json msgJson;
           msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = 0.3/35*(35+15*(1-std::fabs(steer_value)));
+          msgJson["throttle"] = 0.3/35*50;
+          //msgJson["throttle"] = 0.3/35*(35+15*(1-std::fabs(steer_value)));
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           //std::cout << msg << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);

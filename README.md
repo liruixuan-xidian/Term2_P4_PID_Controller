@@ -1,9 +1,21 @@
 # CarND-Controls-PID
 Self-Driving Car Engineer Nanodegree Program
 
-##Implementation
-
 ---
+
+## Implementation
+
+The PID controller has three major parameters to tune, namely proportional gain (K<sub>p</sub>), integral gain (K<sub>i</sub>) and derivative gain (K<sub></sub>). To tune them for the simulator, I first tried to manually tune the parameters K<sub>p</sub> and K<sub>d</sub>. I increased the proportional gain to a certain extent where I could see the car do almost a constant amplitude oscillations. After achieving this, I tried to increase the derivative gain to reduce the oscillations. This lead to the initial configuration of my parameters for implementing twiddle. Through the twiddle algorithm, I got parameters that were better, but a bit jerky. Finally a manual fine tuning of those parameters lead to the values of K<sub>p</sub> as 0.65, K<sub>i</sub> as 0.008 and K<sub>d</sub> as 22..
+
+## Reflection
+
+The proportaional gain is set as a control to equate steering angle to cross track error, which one gets through the simulator. Since it is directly porportional to the cross track error, it has a tendancy to induce an oscillating effect near the desired position and this is exactly what I noticed after I started tuning this parameter. To find the right parameter value such that there is a constant amplitude of oscillations was a little bit of a challenge nevertheless. 
+
+The derivative gain is set to control the change in the cross track error. Therefore the oscillatory movement of the car resulting in ever changing cross track error was reduced by this parameter. The proportional and dervative gains were tuned in the first instant.
+
+The integral gain is set to control the past values of the cross track error. This accumulates the cross track error since the beginning and when it becomes sufficiently large, the controller has the ability to act according to the desired outcome.
+
+Eventually, a little bit of manual tuning and twiddle helped me get the right parameters for controlling the car. Although, I still feel I can do better with the parameters, the final combination does make the car go round the track with minimal errors. The downside of using twiddle is that it can get stuck in a local minima and that is usually not the most optimum configuration. The future work will entail a better tuning of parameters and controlling the throttle in such a way to accommodate for higher speeds. A [video](https://youtu.be/B85GKgiXIHw) of a single lap of the car maneuvering through the lanes can be viewed and studied. The movement is a little jerky and a better parameter tuning would result in better maneuvering of the car.
 
 ## Dependencies
 
